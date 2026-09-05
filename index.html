@@ -194,7 +194,7 @@ function renderHome(){
 /* ================= 开单 ================= */
 let saleKW='';
 function renderSale(){
-  return '<div class="topbar"><h1>销售开单</h1><div class="sub">扫码或搜索添加商品</div></div>'
+  return '<div class="topbar"><div class="row between"><h1>销售开单</h1><button class="btn sm" style="background:#fff;color:var(--pri)" onclick="saleScan()">📷 扫码</button></div><div class="sub">扫码或搜索添加商品</div></div>'
   +'<div class="card" style="margin-top:-30px"><div class="searchbox"><input placeholder="🔍 输入商品名称 / 货号 / 条码" value="'+esc(saleKW)+'" oninput="saleKW=this.value;renderSaleResults()"></div></div>'
   +'<div id="saleResults" style="background:#fff;margin:0 12px;border-radius:12px;overflow:hidden"></div>'
   +'<div style="height:130px"></div>'
@@ -276,15 +276,15 @@ function cats(){return [...new Set(DB.products.map(p=>p.cat).filter(Boolean))]}
 function renderGoods(){
   const kw=goodsKW.trim().toLowerCase();
   let list=DB.products.filter(p=>(!kw||p.name.toLowerCase().includes(kw)||p.code.toLowerCase().includes(kw))&&(!goodsCat||p.cat===goodsCat));
-  return '<div class="topbar" style="padding-bottom:14px"><div class="row between"><h1>商品管理（'+DB.products.length+'）</h1><button class="btn sm" style="background:#fff;color:var(--pri)" onclick="editProduct()">＋ 新增</button></div></div>'
+  return '<div class="topbar" style="padding-bottom:14px"><div class="row between"><h1>商品管理（'+DB.products.length+'）</h1><button class="btn sm" style="background:#fff;color:var(--pri)" onclick="goodsScan()">📷 扫码</button> <button class="btn sm" style="background:#fff;color:var(--pri)" onclick="editProduct()">＋ 新增</button></div></div>'
   +'<div class="card" style="margin-top:-30px"><div class="searchbox"><input placeholder="🔍 搜索名称 / 货号" value="'+esc(goodsKW)+'" oninput="goodsKW=this.value;refreshMain()"></div></div>'
   +'<div class="seg"><div class="'+(goodsCat===''?'on':'')+'" onclick="goodsCat=\'\';refreshMain()">全部</div>'+cats().map(c=>'<div class="'+(goodsCat===c?'on':'')+'" onclick="goodsCat=\''+esc(c)+'\';refreshMain()">'+esc(c)+'</div>').join('')+'</div>'
   +'<div style="background:#fff;margin:0 12px;border-radius:12px;overflow:hidden">'
   +(list.length?list.map(p=>'<div class="list-item" onclick="editProduct(\''+p.id+'\')"><div class="li-main"><div class="li-title">'+esc(p.name)+'</div><div class="li-sub">'+esc(p.code)+' · '+esc(p.color)+'/'+esc(p.size)+' · 成本 '+fm(p.cost)+'</div></div><div class="li-right"><div class="price money">'+fm(p.price)+'</div><div class="li-sub">库存 '+(p.stock<=0?'<span class="tag out">0 缺货</span>':p.stock<=p.warn?'<span class="tag warn">'+p.stock+' 偏低</span>':'<span class="tag green">'+p.stock+'</span>')+'</div></div></div>').join(''):'<div class="empty">暂无商品，点右上角「新增」建档</div>')
   +'</div><div style="height:20px"></div>';
 }
-function editProduct(pid){
-  const p=pid?DB.products.find(x=>x.id===pid):{code:'',name:'',cat:goodsCat||'',color:'',size:'',cost:'',price:'',stock:0,warn:3};
+function editProduct(pid,preCode){
+  const p=pid?DB.products.find(x=>x.id===pid):{code:preCode||'',name:'',cat:goodsCat||'',color:'',size:'',cost:'',price:'',stock:0,warn:3};
   formModal(pid?'编辑商品':'新增商品',[
     {key:'code',label:'货号 / 条码',value:p.code,req:1,ph:'如 A001'},
     {key:'name',label:'商品名称',value:p.name,req:1},
@@ -325,7 +325,7 @@ function adjStock(pid,d){const p=DB.products.find(x=>x.id===pid);p.stock=Math.ma
 let purCart=[];
 function openPurchase(){
   purCart=[];
-  openOv(ovTop('进货入库')+'<div class="card"><div class="searchbox"><input placeholder="🔍 搜索要进货的商品" oninput="purSearch(this.value)"></div><div id="purRes"></div></div>'
+  openOv(ovTop('进货入库')+'<div class="card"><div class="searchbox"><input placeholder="🔍 搜索要进货的商品" oninput="purSearch(this.value)"></div><button class="btn block ghost" style="margin-top:10px" onclick="purScan()">📷 扫码添加入库</button><div id="purRes"></div></div>'
   +'<div class="card"><div class="fld"><label>供应商（选填）</label><input id="purSup" placeholder="如 广州十三行档口"></div><div id="purList"></div>'
   +'<div class="row between" style="padding-top:10px"><b>进货总额</b><b class="price money" id="purTotal">¥0.00</b></div></div>'
   +'<div style="padding:12px"><button class="btn block" onclick="doPurchase()">✓ 确认入库</button></div>');
@@ -492,6 +492,46 @@ function importData(inp){
   r.readAsText(f);inp.value='';
 }
 function clearAll(){confirmModal('清空数据','将删除所有商品、订单、客户，且不可恢复！',()=>{localStorage.removeItem(LS);DB=loadDB();cart=[];render();toast('已重置为演示数据')})}
+
+
+/* ================= 摄像头扫码 ================= */
+let scanStream=null,scanTimer=null,scanCb=null;
+function startScan(cb){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!('BarcodeDetector' in window)){
+    return toast('当前浏览器不支持直接扫码，请换 Chrome/夸克浏览器，或手动输入货号');
+  }
+  scanCb=cb;
+  modal('<h3>📷 对准条码或二维码</h3><video id="scanVideo" style="width:100%;border-radius:10px;background:#000;min-height:200px" playsinline muted></video><p style="font-size:.78rem;color:#999;text-align:center;margin-top:8px">把条码完整放入画面中，保持平稳</p><button class="btn block gray" style="margin-top:10px" onclick="stopScan()">取消扫码</button>');
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(stream=>{
+    scanStream=stream;
+    const v=document.getElementById('scanVideo');v.srcObject=stream;v.play();
+    const det=new BarcodeDetector({formats:['qr_code','ean_13','ean_8','code_128','code_39','code_93','upc_a','upc_e','datamatrix']});
+    scanTimer=setInterval(async()=>{
+      try{
+        if(v.readyState<2)return;
+        const codes=await det.detect(v);
+        if(codes&&codes.length){const val=codes[0].rawValue;stopScan();if(scanCb)scanCb(val)}
+      }catch(e){}
+    },350);
+  }).catch(()=>{toast('无法打开相机，请在浏览器设置中允许相机权限');closeModal();});
+}
+function stopScan(){if(scanTimer)clearInterval(scanTimer);if(scanStream)scanStream.getTracks().forEach(t=>t.stop());scanTimer=scanStream=null;scanCb=null;closeModal()}
+function findByCode(code){return DB.products.find(x=>String(x.code).toLowerCase()===String(code).toLowerCase())}
+function saleScan(){startScan(code=>{
+  const p=findByCode(code);
+  if(p){addToCart(p.id)}
+  else{saleKW=code;const inp=document.querySelector('#app input');if(inp)inp.value=code;renderSaleResults();toast('未找到该商品，已按编号搜索，可点「新增」建档')}
+})}
+function goodsScan(){startScan(code=>{
+  const p=findByCode(code);
+  if(p){editProduct(p.id)}
+  else{editProduct(null,code);toast('未找到该商品，已帮你填好货号，请完善信息')}
+})}
+function purScan(){startScan(code=>{
+  const p=findByCode(code);
+  if(p){purAdd(p.id);toast('已加入进货单：'+p.name)}
+  else toast('未找到货号 '+code+' 的商品，请先建档');
+})}
 
 /* ================= 渲染入口 ================= */
 function render(){
